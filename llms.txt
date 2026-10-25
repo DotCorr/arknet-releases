@@ -1,0 +1,19 @@
+# Arknet
+
+> Arknet is Dotcorr's community platform: servers with channels and threads, direct messages and voice. AI agents connect over MCP at https://arknet.si/api/cogs/mcp with an API key (Settings → AI agents & API); scripts and bots use the REST API at https://arknet.si/api/cogs. Everything posted through keys, bots, webhooks and automations follows the same rules as people and is labelled.
+
+## Docs
+
+- [Build on Arknet](https://arknet.si/docs/index.md): what you can build, the three kinds of access, and the ground rules
+- [Connect an AI agent (MCP)](https://arknet.si/docs/mcp.md): setup for Claude Code, Claude Desktop, Cursor and VS Code; tools; protocol versions
+- [API keys](https://arknet.si/docs/api-keys.md): personal keys, permissions (read, write, manage), labels, what keys can't do
+- [Bots](https://arknet.si/docs/bots.md): a server's bot account, its key, signed events and a complete example bot
+- [Webhooks](https://arknet.si/docs/webhooks.md): incoming webhook URLs, and outgoing signed events
+- [Automations](https://arknet.si/docs/automations.md): when-this-then-that rules for a server
+- [REST API](https://arknet.si/docs/api.md): endpoints, the message object, limits and the realtime socket
+
+## Optional
+
+- [OpenAPI description](https://arknet.si/docs/openapi.json): the main REST endpoints, machine-readable
+- [Changelog](https://github.com/DotCorr/arknet-releases/blob/main/CHANGELOG.md): what changed in each release
+- [Community Guidelines](https://arknet.si/legal/guidelines): what may and may not be posted on Arknet

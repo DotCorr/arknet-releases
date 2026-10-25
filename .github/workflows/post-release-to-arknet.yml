@@ -1,0 +1,61 @@
+# When a release is published here, the Releases bot posts it in Arknet's
+# #changelog channel, through Arknet's REST API (see docs/bots.md).
+#
+# Needs:
+#   secret   ARKNET_BOT_KEY            the bot's key (ark_bot_…), from Server
+#                                      settings → Integrations in Arknet
+#   variable ARKNET_CHANGELOG_CHANNEL  the #changelog channel's id
+#   variable ARKNET_URL                optional; defaults to https://arknet.si
+#
+# Until both are set, publishing a release skips this step with a notice.
+name: Post releases to Arknet
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post the release in #changelog
+        env:
+          ARKNET_URL: ${{ vars.ARKNET_URL || 'https://arknet.si' }}
+          ARKNET_CHANNEL: ${{ vars.ARKNET_CHANGELOG_CHANNEL }}
+          ARKNET_BOT_KEY: ${{ secrets.ARKNET_BOT_KEY }}
+          # Release fields arrive through env, never pasted into the script.
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          if [ -z "$ARKNET_BOT_KEY" ] || [ -z "$ARKNET_CHANNEL" ]; then
+            echo "::notice::Set the ARKNET_BOT_KEY secret and the ARKNET_CHANGELOG_CHANNEL variable to post releases to Arknet."
+            exit 0
+          fi
+          payload=$(python3 - <<'PY'
+          import json, os
+          name = os.environ.get('RELEASE_NAME') or os.environ['RELEASE_TAG']
+          tag = os.environ['RELEASE_TAG']
+          # "Arknet 0.1.0 (preview)" stays as it is; a bare name gets its tag.
+          title = name if tag.lstrip('v') in name else f'{name} ({tag})'
+          notes = (os.environ.get('RELEASE_BODY') or '').strip()
+          if len(notes) > 3300:
+              notes = notes[:3300].rsplit('\n', 1)[0] + '\n\n…'
+          prerelease = os.environ.get('PRERELEASE') == 'true'
+          preview = ' · preview' if prerelease and 'preview' not in name.lower() else ''
+          text = f"## {title}{preview}\n\n{notes}\n\n[Full release notes]({os.environ['RELEASE_URL']})"
+          print(json.dumps({'text': text.strip()}))
+          PY
+          )
+          curl --fail-with-body -sS -X POST \
+            "$ARKNET_URL/api/cogs/channels/$ARKNET_CHANNEL/messages" \
+            -H "Authorization: Bearer $ARKNET_BOT_KEY" \
+            -H "Content-Type: application/json" \
+            --data "$payload" > /dev/null
+          echo "Posted $RELEASE_TAG to Arknet."
