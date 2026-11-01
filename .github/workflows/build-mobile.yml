@@ -1,0 +1,133 @@
+# Builds and checks the phone apps. iOS runs its unit tests in the Simulator; Android
+# runs lint. Signed builds happen only once their secrets exist; apps/ios/README.md and
+# apps/android/README.md say which those are.
+#
+# The same file works in both repositories. In the public DotCorr/arknet-releases the source
+# comes through the PLATFORM_DEPLOY_KEY secret and the Mac runners are free, so that's where
+# builds for TestFlight run.
+name: Build the phone apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version for the store builds, such as 0.2.0
+        required: false
+        default: ""
+  push:
+    branches: [ci-mobile]
+    paths:
+      - apps/ios/**
+      - apps/android/**
+      - .github/workflows/build-mobile.yml
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Stated, so a failure before a pipe to `tail` fails the step.
+        shell: bash
+        working-directory: apps/android
+    env:
+      ARKNET_ANDROID_KEYSTORE: ${{ secrets.ARKNET_ANDROID_KEYSTORE_BASE64 != '' && '/tmp/arknet-upload.jks' || '' }}
+      ARKNET_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ARKNET_ANDROID_KEYSTORE_PASSWORD }}
+      ARKNET_ANDROID_KEY_ALIAS: ${{ secrets.ARKNET_ANDROID_KEY_ALIAS }}
+      ARKNET_ANDROID_KEY_PASSWORD: ${{ secrets.ARKNET_ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apps/android
+          # Empty in arknet-platform itself, where the repository's own token reads it.
+          ssh-key: ${{ secrets.PLATFORM_DEPLOY_KEY }}
+          repository: DotCorr/arknet-platform
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Put the upload key in place
+        if: env.ARKNET_ANDROID_KEYSTORE != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ARKNET_ANDROID_KEYSTORE_BASE64 }}
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ARKNET_ANDROID_KEYSTORE"
+      - name: Lint and build
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ARGS="-PappBuild=$GITHUB_RUN_NUMBER"
+          if [ -n "$VERSION" ]; then ARGS="$ARGS -PappVersion=$VERSION"; fi
+          ./gradlew --no-daemon $ARGS lintRelease assembleDebug bundleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arknet-android
+          path: |
+            apps/android/app/build/outputs/apk/debug/*.apk
+            apps/android/app/build/outputs/bundle/release/*.aab
+          retention-days: 5
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apps/ios
+          ssh-key: ${{ secrets.PLATFORM_DEPLOY_KEY }}
+          repository: DotCorr/arknet-platform
+          persist-credentials: false
+      - name: Test in the Simulator
+        run: |
+          SIM=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          runtimes = json.load(sys.stdin)['devices']
+          ios = sorted((r for r in runtimes if 'iOS' in r), reverse=True)
+          print(next(d['udid'] for r in ios for d in runtimes[r] if d['name'].startswith('iPhone')))
+          ")
+          xcodebuild test -project Arknet.xcodeproj -scheme Arknet -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIM" -derivedDataPath build | tail -25
+      - name: Build for release, unsigned
+        run: |
+          xcodebuild build -project Arknet.xcodeproj -scheme Arknet -configuration Release \
+            -destination "generic/platform=iOS" -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO | tail -5
+      - name: Send to TestFlight
+        if: inputs.version != ''
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$TEAM_ID" ] || [ -z "$KEY_P8" ]; then
+            echo "::notice::Add APPLE_TEAM_ID and the App Store Connect key secrets to send builds to TestFlight."
+            exit 0
+          fi
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$KEY_P8" > "$KEY_PATH"
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY_PATH -authenticationKeyID $KEY_ID -authenticationKeyIssuerID $ISSUER_ID"
+          xcodebuild archive -project Arknet.xcodeproj -scheme Arknet -configuration Release \
+            -destination "generic/platform=iOS" -archivePath "$RUNNER_TEMP/Arknet.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" $AUTH | tail -5
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>method</key><string>app-store-connect</string>
+          <key>destination</key><string>upload</string>
+          <key>teamID</key><string>$TEAM_ID</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Arknet.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" $AUTH | tail -5
