@@ -1,5 +1,7 @@
 # When a release is published here, the Releases bot posts it in Arknet's
-# #changelog channel, through Arknet's REST API (see docs/bots.md).
+# #changelog channel, through Arknet's REST API (see docs/bots.md). build-apps.yml
+# starts this itself, because a release published with a workflow's own token
+# doesn't fire `release: published`.
 #
 # Needs:
 #   secret   ARKNET_BOT_KEY            the bot's key (ark_bot_…), from Server
@@ -13,6 +15,12 @@ name: Post releases to Arknet
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release's tag, like v0.2.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -24,10 +32,12 @@ jobs:
     steps:
       - name: Post the release in #changelog
         env:
+          GH_TOKEN: ${{ github.token }}
           ARKNET_URL: ${{ vars.ARKNET_URL || 'https://arknet.si' }}
           ARKNET_CHANNEL: ${{ vars.ARKNET_CHANGELOG_CHANNEL }}
           ARKNET_BOT_KEY: ${{ secrets.ARKNET_BOT_KEY }}
           # Release fields arrive through env, never pasted into the script.
+          TAG_INPUT: ${{ inputs.tag }}
           RELEASE_NAME: ${{ github.event.release.name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
@@ -37,6 +47,15 @@ jobs:
           if [ -z "$ARKNET_BOT_KEY" ] || [ -z "$ARKNET_CHANNEL" ]; then
             echo "::notice::Set the ARKNET_BOT_KEY secret and the ARKNET_CHANGELOG_CHANNEL variable to post releases to Arknet."
             exit 0
+          fi
+          if [ -n "$TAG_INPUT" ]; then
+            release=$(gh release view "$TAG_INPUT" -R "$GITHUB_REPOSITORY" --json name,tagName,url,body,isPrerelease)
+            RELEASE_NAME=$(jq -r .name <<< "$release")
+            RELEASE_TAG=$(jq -r .tagName <<< "$release")
+            RELEASE_URL=$(jq -r .url <<< "$release")
+            RELEASE_BODY=$(jq -r .body <<< "$release")
+            PRERELEASE=$(jq -r .isPrerelease <<< "$release")
+            export RELEASE_NAME RELEASE_TAG RELEASE_URL RELEASE_BODY PRERELEASE
           fi
           payload=$(python3 - <<'PY'
           import json, os

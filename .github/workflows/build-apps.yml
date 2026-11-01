@@ -1,0 +1,336 @@
+# Builds the Arknet desktop apps, checks that each one starts and can reach the site,
+# and, only in the public DotCorr/arknet-releases, turns them into a release.
+#
+# The same file works in both repositories. In the public one the source comes from
+# the private DotCorr/arknet-platform through the PLATFORM_DEPLOY_KEY secret, and the
+# runners are free; apps/desktop/README.md has what else it needs. Signing and app
+# updates turn on by themselves once their secrets exist.
+#
+# To test from the private repository, push to the ci-apps branch. Its macOS minutes
+# count ten times against the free plan, so a commit message with [only linux],
+# [only windows] or [only macos] builds just that one.
+name: Build the Arknet apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, like 0.2.0
+        required: true
+        type: string
+      platform_ref:
+        description: Branch or commit of arknet-platform to build
+        default: main
+        type: string
+      prerelease:
+        description: Mark it a preview. Installed apps don't update themselves to previews.
+        default: false
+        type: boolean
+      publish:
+        description: 'Publish it and post it to #changelog. Off leaves a draft to look over.'
+        default: false
+        type: boolean
+      notes:
+        description: Release notes
+        default: ''
+        type: string
+      only:
+        description: Build for one system only
+        default: all
+        type: choice
+        options: [all, macos, windows, linux]
+  push:
+    branches: [ci-apps]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      version: ${{ steps.plan.outputs.version }}
+      ref: ${{ steps.plan.outputs.ref }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.platform_ref }}
+        run: |
+          case "$MESSAGE" in
+            *'[only linux]'*) ONLY=linux ;;
+            *'[only windows]'*) ONLY=windows ;;
+            *'[only macos]'*) ONLY=macos ;;
+          esac
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::The version must look like 0.2.0"
+              exit 1
+            fi
+          else
+            VERSION="0.0.$GITHUB_RUN_NUMBER"
+            REF="$GITHUB_SHA"
+          fi
+          release=false
+          if [ "$GITHUB_REPOSITORY" = DotCorr/arknet-releases ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            release=true
+          fi
+          matrix=$(jq -cn --arg only "${ONLY:-all}" '
+            [
+              { os: "macos", runner: "macos-latest",
+                rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin",
+                build_args: "--target universal-apple-darwin",
+                probe_args: "--target aarch64-apple-darwin",
+                probe_exe: "src-tauri/target/aarch64-apple-darwin/release/arknet",
+                bundle: "src-tauri/target/universal-apple-darwin/release/bundle" },
+              { os: "windows", runner: "windows-latest",
+                rust_targets: "", build_args: "", probe_args: "",
+                probe_exe: "src-tauri/target/release/arknet.exe",
+                bundle: "src-tauri/target/release/bundle" },
+              { os: "linux", runner: "ubuntu-22.04",
+                rust_targets: "", build_args: "", probe_args: "",
+                probe_exe: "src-tauri/target/release/arknet",
+                bundle: "src-tauri/target/release/bundle" }
+            ] | map(select($only == "all" or .os == $only))')
+          {
+            echo "matrix=$matrix"
+            echo "version=$VERSION"
+            echo "ref=${REF:-main}"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      HAS_APPLE: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
+      # Build AppImages where FUSE is missing; its strip can't read newer libraries.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      NO_STRIP: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: DotCorr/arknet-platform
+          ref: ${{ needs.plan.outputs.ref }}
+          # Empty in arknet-platform itself, where the repository's own token reads it.
+          ssh-key: ${{ secrets.PLATFORM_DEPLOY_KEY }}
+          persist-credentials: false
+          sparse-checkout: apps/desktop
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # These two aren't GitHub's own and run beside the signing keys, so they stay on one commit.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_targets }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Install what Linux builds need
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libxdo-dev libssl-dev patchelf file \
+            xvfb xdotool dbus dbus-x11 imagemagick \
+            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+      - name: Install the build tool
+        working-directory: apps/desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Turn on app updates
+        if: env.HAS_UPDATER_KEY == 'true'
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$KEY_PASSWORD"
+            echo "TAURI_UPDATER_PUBKEY=$PUBKEY"
+          } >> "$GITHUB_ENV"
+      - name: Turn on macOS signing and notarizing
+        if: matrix.os == 'macos' && env.HAS_APPLE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          {
+            echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            echo "APPLE_ID=$APPLE_ID"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+      - name: Turn on Windows signing
+        if: matrix.os == 'windows' && env.HAS_AZURE == 'true'
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          cargo install artifact-signing-cli --version 0.12.0 --locked
+          {
+            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
+            echo "AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET"
+            echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
+            echo "AZURE_SIGNING_ENDPOINT=$AZURE_SIGNING_ENDPOINT"
+            echo "AZURE_SIGNING_ACCOUNT=$AZURE_SIGNING_ACCOUNT"
+            echo "AZURE_SIGNING_PROFILE=$AZURE_SIGNING_PROFILE"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: apps/desktop
+        run: |
+          node ci/config.mjs > ci-config.json
+          npx tauri build ${{ matrix.build_args }} --config "$(cat ci-config.json)"
+      - name: Gather the installers
+        working-directory: apps/desktop
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+        run: node ci/gather.mjs "${{ matrix.os }}" "$BUNDLE" dist
+
+      - name: Start the macOS app
+        if: matrix.os == 'macos'
+        working-directory: apps/desktop
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+        run: |
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes' "$BUNDLE/macos/Arknet.app/Contents/Info.plist"
+          codesign -dv "$BUNDLE/macos/Arknet.app" 2>&1 | grep -E 'Signature|Authority|flags' || true
+          node ci/smoke.mjs stay macos "$BUNDLE/macos/Arknet.app/Contents/MacOS/arknet"
+      - name: Install and start the Windows app
+        if: matrix.os == 'windows'
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist/*-setup.exe)[0].FullName
+          Start-Process -FilePath $setup -ArgumentList '/S' -Wait
+          Get-ChildItem "$env:LOCALAPPDATA\Arknet" | Select-Object Name, Length
+          reg query 'HKCU\Software\Classes\arknet' /s
+          node ci/smoke.mjs stay windows "$env:LOCALAPPDATA\Arknet\arknet.exe"
+      - name: Install and start the Linux app
+        if: matrix.os == 'linux'
+        working-directory: apps/desktop
+        run: |
+          sudo apt-get install -y "./$(ls dist/*.deb)"
+          grep -H -E '^(Name|Exec|Icon|MimeType)=' /usr/share/applications/*.desktop | grep -i arknet || true
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24' \
+            node ci/smoke.mjs stay linux-deb arknet
+          chmod +x dist/*.AppImage
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24' \
+            node ci/smoke.mjs stay linux-appimage "$(ls -d "$PWD"/dist/*.AppImage)"
+
+      - name: Build a test copy
+        working-directory: apps/desktop
+        run: npx tauri build --no-bundle --features smoke ${{ matrix.probe_args }} --config "$(cat ci-config.json)"
+      - name: Ask the test copy what its web view can do
+        working-directory: apps/desktop
+        env:
+          PROBE_EXE: ${{ matrix.probe_exe }}
+          WRAP: ${{ matrix.os == 'linux' && 'dbus-run-session -- xvfb-run -a' || '' }}
+        run: $WRAP node ci/smoke.mjs probe "${{ matrix.os }}" "$PROBE_EXE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arknet-${{ matrix.os }}
+          path: apps/desktop/dist/*
+          retention-days: 5
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: apps/desktop/smoke/*
+          retention-days: 14
+
+  release:
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      NOTES: ${{ inputs.notes }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: DotCorr/arknet-platform
+          ref: ${{ needs.plan.outputs.ref }}
+          ssh-key: ${{ secrets.PLATFORM_DEPLOY_KEY }}
+          persist-credentials: false
+          sparse-checkout: apps/desktop/ci
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: arknet-*
+          path: dist
+          merge-multiple: true
+      - name: Make the app updates' manifest
+        run: node apps/desktop/ci/latest-json.mjs dist "$VERSION" "$GITHUB_REPOSITORY" "$NOTES"
+      - name: Make the draft release
+        run: |
+          tag="v$VERSION"
+          flags=()
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          # Signatures are in the manifest; only the installers go up.
+          files=$(find dist -type f ! -name '*.sig')
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" $files -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" $files -R "$GITHUB_REPOSITORY" --draft \
+              --title "Arknet $VERSION" --notes "${NOTES:-Arknet for Windows, macOS and Linux.}" "${flags[@]}"
+          fi
+
+  publish:
+    needs: [plan, release]
+    if: needs.plan.outputs.release == 'true' && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Publish the release
+        run: gh release edit "v$VERSION" -R "$GITHUB_REPOSITORY" --draft=false
+      # A release published with this job's token doesn't fire `release: published`, so it says so itself.
+      - name: 'Have the Releases bot post it in #changelog'
+        run: gh workflow run post-release-to-arknet.yml -R "$GITHUB_REPOSITORY" -f tag="v$VERSION"
