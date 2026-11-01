@@ -2,6 +2,16 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.0: the Mac and Linux apps
+
+Arknet in its own window, for Mac and Linux. Get them from [Releases](https://github.com/DotCorr/arknet-releases/releases/tag/v0.2.0).
+
+- **Mac:** signed and notarized by Apple, for Intel and Apple silicon, on macOS 12 or later.
+- **Linux:** a `.deb` and an AppImage. Calls don't work in the Linux app yet, so it offers to open them in your browser.
+- Google and GitHub sign-in run in your browser and come back to the app.
+- Downloads, notifications and the unread badge use your system's own.
+- The app updates itself. The Arknet inside it updates with the site.
+
 ## v0.1.0: preview
 
 The first public preview of Arknet.

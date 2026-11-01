@@ -5,6 +5,7 @@ Arknet is where communities talk: servers with channels and threads, direct mess
 This repository is Arknet's public home for **releases**, the **changelog** and the **developer docs**. Arknet's own source code is private.
 
 - **Use Arknet:** [arknet.si](https://arknet.si)
+- **Get the apps:** [Mac and Linux](https://github.com/DotCorr/arknet-releases/releases/latest)
 - **What's new:** [CHANGELOG.md](CHANGELOG.md) and [Releases](https://github.com/DotCorr/arknet-releases/releases). Every release is also posted in the `#changelog` channel of the Arknet server.
 - **Build on Arknet:** [docs/](docs/index.md)
 
