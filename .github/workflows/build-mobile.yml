@@ -113,7 +113,9 @@ jobs:
             echo "::notice::Add APPLE_TEAM_ID and the App Store Connect key secrets to send builds to TestFlight."
             exit 0
           fi
-          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          # altool only looks for a key under this name, in folders like this one.
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_$KEY_ID.p8"
+          mkdir -p "$(dirname "$KEY_PATH")"
           printf '%s' "$KEY_P8" > "$KEY_PATH"
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY_PATH -authenticationKeyID $KEY_ID -authenticationKeyIssuerID $ISSUER_ID"
           xcodebuild archive -project Arknet.xcodeproj -scheme Arknet -configuration Release \
@@ -125,9 +127,12 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
           <key>method</key><string>app-store-connect</string>
-          <key>destination</key><string>upload</string>
+          <key>destination</key><string>export</string>
           <key>teamID</key><string>$TEAM_ID</string>
           </dict></plist>
           PLIST
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Arknet.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" $AUTH | tail -5
+          # xcodebuild's own upload wants an Xcode account, which a build machine doesn't have.
+          xcrun altool --upload-app -f "$RUNNER_TEMP/export/Arknet.ipa" -t ios \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID"
