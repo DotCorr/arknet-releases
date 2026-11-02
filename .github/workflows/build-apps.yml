@@ -7,8 +7,10 @@
 # updates turn on by themselves once their secrets exist.
 #
 # To test from the private repository, push to the ci-apps branch. Its macOS minutes
-# count ten times against the free plan, so a commit message with [only linux],
-# [only windows] or [only macos] builds just that one.
+# count ten times against the free plan, so a commit message with [only linux]
+# or [only macos] builds just that one.
+#
+# There's no Windows build: Windows runs the Linux app through WSL (apps/site/public/install.ps1).
 name: Build the Arknet apps
 
 on:
@@ -38,7 +40,7 @@ on:
         description: Build for one system only
         default: all
         type: choice
-        options: [all, macos, windows, linux]
+        options: [all, macos, linux]
   push:
     branches: [ci-apps]
 
@@ -64,7 +66,6 @@ jobs:
         run: |
           case "$MESSAGE" in
             *'[only linux]'*) ONLY=linux ;;
-            *'[only windows]'*) ONLY=windows ;;
             *'[only macos]'*) ONLY=macos ;;
           esac
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
@@ -88,10 +89,6 @@ jobs:
                 probe_args: "--target aarch64-apple-darwin",
                 probe_exe: "src-tauri/target/aarch64-apple-darwin/release/arknet",
                 bundle: "src-tauri/target/universal-apple-darwin/release/bundle" },
-              { os: "windows", runner: "windows-latest",
-                rust_targets: "", build_args: "", probe_args: "",
-                probe_exe: "src-tauri/target/release/arknet.exe",
-                bundle: "src-tauri/target/release/bundle" },
               { os: "linux", runner: "ubuntu-22.04",
                 rust_targets: "", build_args: "", probe_args: "",
                 probe_exe: "src-tauri/target/release/arknet",
@@ -120,7 +117,6 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
       HAS_APPLE: ${{ secrets.APPLE_CERTIFICATE != '' }}
-      HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
       # Build AppImages where FUSE is missing; its strip can't read newer libraries.
       APPIMAGE_EXTRACT_AND_RUN: 1
       NO_STRIP: true
@@ -188,26 +184,6 @@ jobs:
             echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
             echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notary.p8"
           } >> "$GITHUB_ENV"
-      - name: Turn on Windows signing
-        if: matrix.os == 'windows' && env.HAS_AZURE == 'true'
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
-          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
-        run: |
-          cargo install artifact-signing-cli --version 0.12.0 --locked
-          {
-            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
-            echo "AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET"
-            echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
-            echo "AZURE_SIGNING_ENDPOINT=$AZURE_SIGNING_ENDPOINT"
-            echo "AZURE_SIGNING_ACCOUNT=$AZURE_SIGNING_ACCOUNT"
-            echo "AZURE_SIGNING_PROFILE=$AZURE_SIGNING_PROFILE"
-          } >> "$GITHUB_ENV"
-
       - name: Build
         working-directory: apps/desktop
         run: |
@@ -241,16 +217,6 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes' "$BUNDLE/macos/Arknet.app/Contents/Info.plist"
           codesign -dv "$BUNDLE/macos/Arknet.app" 2>&1 | grep -E 'Signature|Authority|flags' || true
           node ci/smoke.mjs stay macos "$BUNDLE/macos/Arknet.app/Contents/MacOS/arknet"
-      - name: Install and start the Windows app
-        if: matrix.os == 'windows'
-        working-directory: apps/desktop
-        shell: pwsh
-        run: |
-          $setup = (Get-ChildItem dist/*-setup.exe)[0].FullName
-          Start-Process -FilePath $setup -ArgumentList '/S' -Wait
-          Get-ChildItem "$env:LOCALAPPDATA\Arknet" | Select-Object Name, Length
-          reg query 'HKCU\Software\Classes\arknet' /s
-          node ci/smoke.mjs stay windows "$env:LOCALAPPDATA\Arknet\arknet.exe"
       - name: Install and start the Linux app
         if: matrix.os == 'linux'
         working-directory: apps/desktop
@@ -328,7 +294,7 @@ jobs:
             gh release upload "$tag" $files -R "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$tag" $files -R "$GITHUB_REPOSITORY" --draft \
-              --title "Arknet $VERSION" --notes "${NOTES:-Arknet for Windows, macOS and Linux.}" "${flags[@]}"
+              --title "Arknet $VERSION" --notes "${NOTES:-Arknet for macOS and Linux.}" "${flags[@]}"
           fi
 
   publish:
