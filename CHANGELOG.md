@@ -2,6 +2,13 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.1: more like a desktop app
+
+- **Several windows:** File > New Window (Cmd+N, or Ctrl+N on Linux), and Open This Page in a New Window (Cmd+Shift+N, or Ctrl+Shift+N).
+- **A cleaner title bar:** it takes the colour of the page instead of standing apart from it.
+- **Location on a Mac:** the map and location sharing now ask macOS, so they can work in the app.
+- **Dropped files:** files you drag onto the window now reach the page.
+
 ## v0.2.0: the Mac and Linux apps
 
 Arknet in its own window, for Mac and Linux. Get them from [Releases](https://github.com/DotCorr/arknet-releases/releases/tag/v0.2.0).
