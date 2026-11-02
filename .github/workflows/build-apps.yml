@@ -6,9 +6,12 @@
 # runners are free; apps/desktop/README.md has what else it needs. Signing and app
 # updates turn on by themselves once their secrets exist.
 #
-# To test from the private repository, push to the ci-apps branch. Its macOS minutes
-# count ten times against the free plan, so a commit message with [only linux]
-# or [only macos] builds just that one.
+# To test from the private repository, push to the ci-apps branch, or one named ci-apps-*
+# so two tests don't take turns on one branch. Its macOS minutes count ten times against the
+# free plan, so a commit message with [only linux] or [only macos] builds just that one.
+#
+# Linux gets a .deb, an .rpm and an AppImage. The `distros` job installs them on Arch (through
+# the AUR package in apps/desktop/packaging/aur), Fedora and openSUSE.
 #
 # There's no Windows build: Windows runs the Linux app through WSL (apps/site/public/install.ps1).
 name: Build the Arknet apps
@@ -42,7 +45,7 @@ on:
         type: choice
         options: [all, macos, linux]
   push:
-    branches: [ci-apps]
+    branches: [ci-apps, 'ci-apps-*']
 
 permissions:
   contents: read
@@ -232,6 +235,14 @@ jobs:
       - name: Build a test copy
         working-directory: apps/desktop
         run: npx tauri build --no-bundle --features smoke ${{ matrix.probe_args }} --config "$(cat ci-config.json)"
+      # The distros job asks the same test copy about other distributions' web views.
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'linux'
+        with:
+          name: probe-linux
+          path: apps/desktop/${{ matrix.probe_exe }}
+          retention-days: 3
+          if-no-files-found: error
       - name: Ask the test copy what its web view can do
         working-directory: apps/desktop
         env:
@@ -252,9 +263,91 @@ jobs:
           path: apps/desktop/smoke/*
           retention-days: 14
 
-  release:
+  # Each Linux package installed the way people on that distribution would, then started,
+  # along with the AppImage. The test copy then says what the distribution's own WebKitGTK can do.
+  distros:
     needs: [plan, build]
-    if: needs.plan.outputs.release == 'true'
+    if: contains(needs.plan.outputs.matrix, '"linux"')
+    name: ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { distro: arch, image: 'archlinux:latest' }
+          - { distro: fedora, image: 'fedora:latest' }
+          - { distro: opensuse, image: 'opensuse/tumbleweed:latest' }
+    defaults:
+      run:
+        shell: bash
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+    steps:
+      - name: Install what the checks need
+        run: |
+          case "${{ matrix.distro }}" in
+            arch)
+              # pacman's download sandbox can't always start inside a container.
+              sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+              pacman -Syu --noconfirm --needed base-devel git openssh nodejs xorg-server-xvfb \
+                xdotool imagemagick ttf-dejavu mesa namcap ;;
+            fedora)
+              dnf -y install git openssh-clients nodejs /usr/bin/xvfb-run /usr/bin/dbus-run-session \
+                xdotool ImageMagick dejavu-sans-fonts mesa-dri-drivers ;;
+            opensuse)
+              zypper -n install git openssh-clients nodejs-default xvfb-run xdotool dbus-1-daemon \
+                ImageMagick dejavu-fonts Mesa-dri ;;
+          esac
+          for tool in node xvfb-run dbus-run-session xdotool git; do
+            command -v "$tool" > /dev/null || { echo "::error::No $tool on ${{ matrix.distro }}"; exit 1; }
+          done
+      - uses: actions/checkout@v7
+        with:
+          repository: DotCorr/arknet-platform
+          ref: ${{ needs.plan.outputs.ref }}
+          ssh-key: ${{ secrets.PLATFORM_DEPLOY_KEY }}
+          persist-credentials: false
+          sparse-checkout: apps/desktop
+          fetch-depth: 1
+      - uses: actions/download-artifact@v8
+        with:
+          name: arknet-linux
+          path: apps/desktop/dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: probe-linux
+          path: apps/desktop/probe
+      - name: Install Arknet as people there would
+        working-directory: apps/desktop
+        run: ci/distro.sh "${{ matrix.distro }}"
+      - name: Start it, then the AppImage
+        working-directory: apps/desktop
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24' \
+            node ci/smoke.mjs stay "${{ matrix.distro }}" arknet
+          chmod +x dist/*.AppImage
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24' \
+            node ci/smoke.mjs stay "${{ matrix.distro }}-appimage" "$(ls -d "$PWD"/dist/*.AppImage)"
+      - name: Ask the test copy what this distribution's web view can do
+        working-directory: apps/desktop
+        run: |
+          chmod +x probe/arknet
+          dbus-run-session -- xvfb-run -a node ci/smoke.mjs probe "${{ matrix.distro }}" "$PWD/probe/arknet"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-${{ matrix.distro }}
+          path: apps/desktop/smoke/*
+          retention-days: 14
+
+  release:
+    needs: [plan, build, distros]
+    # Runs after a macOS-only build too, whose distros job is skipped.
+    if: >-
+      !cancelled() && needs.plan.outputs.release == 'true' && needs.build.result == 'success' &&
+      (needs.distros.result == 'success' || needs.distros.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -299,7 +392,7 @@ jobs:
 
   publish:
     needs: [plan, release]
-    if: needs.plan.outputs.release == 'true' && inputs.publish
+    if: ${{ !cancelled() && needs.release.result == 'success' && inputs.publish }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
