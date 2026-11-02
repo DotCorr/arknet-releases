@@ -2,6 +2,15 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.3: calls that reach you, and an .rpm
+
+- **Calls ring with the window closed:** on a Mac, closing the window no longer stops Arknet listening. It rings with its own sound, bounces its Dock icon until the call ends, and shows a notification you can answer or decline from.
+- **Notifications on a Mac:** macOS asks once whether Arknet may notify you, and Arknet appears in System Settings > Notifications.
+- **Right-click menus:** servers, channels, direct messages and messages get a proper menu: Open in a New Window, invites, server settings, reply, react, pin, Copy Link and more.
+- **Settings in a window of their own:** Arknet > Settings (Cmd+,) and the settings button open one settings window.
+- **No title bar:** the window's top belongs to Arknet. On a Mac the traffic lights sit over the server list and the sidebar is frosted. On Linux, Arknet draws its own window buttons.
+- **Linux:** an `.rpm` for Fedora and openSUSE, beside the `.deb` and the AppImage. The `.deb` and the `.rpm` now update themselves.
+
 ## v0.2.1: more like a desktop app
 
 - **Several windows:** File > New Window (Cmd+N, or Ctrl+N on Linux), and Open This Page in a New Window (Cmd+Shift+N, or Ctrl+Shift+N).
