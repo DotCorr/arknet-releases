@@ -2,6 +2,11 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.5: Match device follows your Mac
+
+- **Match device:** with the theme set to Match device, Arknet follows your Mac's light or dark appearance in every window, without a reload.
+- **New windows in your colours:** a new window, like settings, starts in your theme's colours instead of dark.
+
 ## v0.2.4: calls that keep ringing, and full screen
 
 - **Calls keep ringing:** a call no longer goes quiet when another Arknet window reloads or closes while it rings, and a ring that goes quiet on its own starts again within a second.
