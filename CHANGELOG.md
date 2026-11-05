@@ -2,6 +2,11 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.4: calls that keep ringing, and full screen
+
+- **Calls keep ringing:** a call no longer goes quiet when another Arknet window reloads or closes while it rings, and a ring that goes quiet on its own starts again within a second.
+- **Full screen on a Mac:** the server list and settings start at the top of the screen, without the empty band kept for the traffic lights, which come down with the menu bar.
+
 ## v0.2.3: calls that reach you, and an .rpm
 
 - **Calls ring with the window closed:** on a Mac, closing the window no longer stops Arknet listening. It rings with its own sound, bounces its Dock icon until the call ends, and shows a notification you can answer or decline from.
