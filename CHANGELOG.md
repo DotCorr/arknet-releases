@@ -2,6 +2,10 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.6: Links open when you press them
+
+- **Links that open a new tab:** links in messages and link previews, and the help and legal links, now open when you press them. Until now these presses did nothing in the desktop app.
+
 ## v0.2.5: Match device follows your Mac
 
 - **Match device:** with the theme set to Match device, Arknet follows your Mac's light or dark appearance in every window, without a reload.
