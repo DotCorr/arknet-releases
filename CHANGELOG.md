@@ -2,6 +2,10 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.7: Save posts as a PDF on a Mac
+
+- **PDF downloads on a Mac:** Download → PDF on a blog post or a hybrid channel's posts opens your Mac's print window over the post laid out for paper, where Save as PDF is. Until now the app sent you to your browser for public channels and offered no PDF in private ones.
+
 ## v0.2.6: Links open when you press them
 
 - **Links that open a new tab:** links in messages and link previews, and the help and legal links, now open when you press them. Until now these presses did nothing in the desktop app.
