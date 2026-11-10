@@ -2,6 +2,10 @@
 
 What changed in each Arknet release. Versions follow [semantic versioning](https://semver.org); everything before 1.0 is a preview.
 
+## v0.2.8: Sign in with Google or GitHub on Linux
+
+- **Signing in on Linux:** in the AppImage, Continue with Google or GitHub opens your browser again, and Arknet takes the sign-in back when you're done. On Arch and the systems built on it, like Omarchy, the AppImage started your browser with its own older libraries, so nothing opened and Arknet couldn't take its arknet:// links. Nothing changes on a Mac.
+
 ## v0.2.7: Save posts as a PDF on a Mac
 
 - **PDF downloads on a Mac:** Download → PDF on a blog post or a hybrid channel's posts opens your Mac's print window over the post laid out for paper, where Save as PDF is. Until now the app sent you to your browser for public channels and offered no PDF in private ones.
